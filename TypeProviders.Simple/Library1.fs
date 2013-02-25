@@ -37,7 +37,7 @@ type public SimpleTypeProvider(cfg : TypeProviderConfig) as this =
             ProvidedStaticParameter("AssemblyPath", typeof<string>)
         ]
 
-    let createErasedType (t : Type) =   
+    let createGeneratedType (t : Type) =   
            let ty = ProvidedTypeDefinition(t.Name, Some(typeof<obj>), IsErased=false, SuppressRelocation = false)
            
            let getParameters (m : MethodBase) =
@@ -74,7 +74,7 @@ type public SimpleTypeProvider(cfg : TypeProviderConfig) as this =
         let providedAssembly = ProvidedAssembly.RegisterGenerated(assemblyPath)
 
         for t in providedAssembly.GetExportedTypes() do
-            let ty = createErasedType t
+            let ty = createGeneratedType t
             ty.SetAssembly(providedAssembly)
             reqType.AddMember(ty)
        
