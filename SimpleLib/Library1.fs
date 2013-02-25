@@ -1,4 +1,4 @@
 ﻿namespace SimpleLib
 
 type Class1() = 
-    member this.X = "F#"
+    member this.X with get() = "F#" and set(v:string) = ()

@@ -38,7 +38,7 @@ type public SimpleTypeProvider(cfg : TypeProviderConfig) as this =
         ]
 
     let createErasedType (t : Type) =   
-           let ty = ProvidedTypeDefinition(t.Name, Some(t))
+           let ty = ProvidedTypeDefinition(t.Name, Some(typeof<obj>), IsErased=false, SuppressRelocation = false)
            
            let getParameters (m : MethodBase) =
                m.GetParameters() 
@@ -55,7 +55,7 @@ type public SimpleTypeProvider(cfg : TypeProviderConfig) as this =
                                   ) :> MemberInfo
                | :? ConstructorInfo as c ->
                    ProvidedConstructor(getParameters c, 
-                                       InvokeCode = (fun args -> Expr.NewObject(c, args))
+                                       InvokeCode = (fun args -> <@@ obj() @@>)
                                        ) :> MemberInfo
                | :? PropertyInfo as p ->
                    ProvidedProperty(propertyName = p.Name,
@@ -69,30 +69,34 @@ type public SimpleTypeProvider(cfg : TypeProviderConfig) as this =
            ty.AddMembers(getMembers t)
            ty 
 
-    let resolveAssembly path (rargs : ResolveEventArgs) =
-        let path = Path.GetDirectoryName(path)
-        let name = Path.Combine(path, rargs.Name + ".dll")
-        if File.Exists(name) 
-        then Assembly.LoadFrom(name)
-        else null
+    let provideAssembly (reqType:ProvidedTypeDefinition) assemblyPath =
+        let name = Path.GetFileName(assemblyPath)
+        let providedAssembly = ProvidedAssembly.RegisterGenerated(assemblyPath)
 
-    let populateAssembly (reqType:ProvidedTypeDefinition) assemblyPath =
-        let name = Path.GetFileNameWithoutExtension(assemblyPath)
-        System.AppDomain.CurrentDomain.add_AssemblyResolve(new ResolveEventHandler(fun _ a -> resolveAssembly assemblyPath a))
-        let assembly = ProvidedTypeDefinition.RegisterGenerated(assemblyPath)
-        
-        for t in assembly.GetExportedTypes() do
-            reqType.AddMember(createErasedType t)
+        for t in providedAssembly.GetExportedTypes() do
+            let ty = createErasedType t
+            ty.SetAssembly(providedAssembly)
+            reqType.AddMember(ty)
        
         reqType
 
     let buildAssembly (typeName:string) (args:obj[]) = 
         let reqType = ProvidedTypeDefinition(ass, ns, typeName, Some typeof<obj>)
         let assemblyPath = args.[0] :?> string
-        Helpers.memoize (populateAssembly reqType) assemblyPath
+        Helpers.memoize (provideAssembly reqType) assemblyPath
 
     do hostType.DefineStaticParameters(parameters, buildAssembly)
     
+    do System.AppDomain.CurrentDomain.add_AssemblyResolve(fun _ args ->
+        let name = System.Reflection.AssemblyName(args.Name)
+        let existingAssembly = 
+            System.AppDomain.CurrentDomain.GetAssemblies()
+            |> Seq.tryFind(fun a -> System.Reflection.AssemblyName.ReferenceMatchesDefinition(name, a.GetName()))
+        match existingAssembly with
+        | Some a -> a
+        | None -> null
+        )
+
     do 
         this.RegisterRuntimeAssemblyLocationAsProbingFolder(cfg)
         this.AddNamespace(ns, [hostType])
