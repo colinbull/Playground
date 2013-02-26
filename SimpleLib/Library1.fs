@@ -1,4 +1,4 @@
 ﻿namespace SimpleLib
 
-type Class1() = 
-    member this.X with get() = "F#" and set(v:string) = ()
+type Greeter(name :string) = 
+    member this.Say(word:string) = sprintf "%s says: %s" name word
