@@ -145,6 +145,7 @@ var
 sdist
 develop-eggs
 .installed.cfg
+[Pp]ackages
 
 # Installer logs
 pip-log.txt

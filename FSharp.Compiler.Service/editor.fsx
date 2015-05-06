@@ -75,20 +75,27 @@ let projectOptions2 =
                             yield fileName1 |] }
 
 let editorWindow = 
-    let tb = new TextBox(Text = "")
+    let tb = new TextBox(Text = "module Test\n\nlet x = 1")
     tb.AcceptsReturn <- true
     tb.AcceptsTab <- true
+    tb.Padding <- new Thickness(2.)
     tb
 
 let completionsListBox = 
     let lb = new ListView()
-    lb.BorderThickness <- new Thickness(1.)    
+    lb.BorderThickness <- new Thickness(1.)  
+    lb.Padding <- new Thickness(2.)  
     lb
 
 let toolTipWindow = 
     let tb = new TextBlock(Text = "")
+    tb.Padding <- new Thickness(2.0)
     tb
 
+let statusWindow = 
+    let tb = new TextBlock(Text = "")
+    tb.Padding <- new Thickness(2.0)
+    tb
 
 let createEditor() = 
     let sp = new Grid()
@@ -96,6 +103,7 @@ let createEditor() =
     sp.ColumnDefinitions.Add(new ColumnDefinition(Width = new GridLength(1., GridUnitType.Star)))
     sp.RowDefinitions.Add(new RowDefinition(Height = new GridLength(4., GridUnitType.Star)))
     sp.RowDefinitions.Add(new RowDefinition(Height = new GridLength(1., GridUnitType.Star)))
+    sp.RowDefinitions.Add(new RowDefinition(Height = new GridLength(0.5, GridUnitType.Star)))
     editorWindow.SetValue(Grid.ColumnProperty, 0)
     editorWindow.SetValue(Grid.RowProperty, 0)
     sp.Children.Add(editorWindow) |> ignore
@@ -106,6 +114,10 @@ let createEditor() =
     toolTipWindow.SetValue(Grid.RowProperty, 1)
     toolTipWindow.SetValue(Grid.ColumnSpanProperty, 2)
     sp.Children.Add(toolTipWindow) |> ignore
+    statusWindow.SetValue(Grid.ColumnProperty, 0)
+    statusWindow.SetValue(Grid.RowProperty, 2)
+    statusWindow.SetValue(Grid.ColumnSpanProperty, 2)
+    sp.Children.Add(statusWindow) |> ignore
     WPF.show(sp)
 
 let getText() =
@@ -124,6 +136,11 @@ let showTooltip text =
       toolTipWindow.Text <- text
     )
 
+let showStatus text =
+    Application.Current.Dispatcher.Invoke(fun () ->
+      statusWindow.Text <- text
+    )
+
 createEditor()
 
 async { while true do 
@@ -131,50 +148,62 @@ async { while true do
             do! Async.Sleep 1000
 
             let text = getText()
-            do myFileSystem.SetFile(fileName1, text) 
+            if not(String.IsNullOrWhiteSpace text)
 
-            printfn "checking..."
+            then
+                do myFileSystem.SetFile(fileName1, text) 
 
-            let! (parseResults, checkResults) =  
-                checker.ParseAndCheckFileInProject(fileName1, 0, text, projectOptions2) 
-            
-            let checkResult = 
-                match checkResults with
-                | FSharpCheckFileAnswer.Succeeded(res) -> res
-                | res -> failwithf "Parsing did not finish... (%A)" res
+                let! (parseResults, checkResults) =  
+                    checker.ParseAndCheckFileInProject(fileName1, 0, text, projectOptions2) 
+                
+                let checkResult = 
+                    match checkResults with
+                    | FSharpCheckFileAnswer.Succeeded(res) -> res
+                    | res -> failwithf "Parsing did not finish... (%A)" res
 
-            let lineIndex = editorWindow.GetLineIndexFromCharacterIndex(editorWindow.CaretIndex)
-            let lineStartIndex = editorWindow.GetCharacterIndexFromLineIndex(lineIndex)
-            let lineOffset = editorWindow.CaretIndex - lineStartIndex
-            let line = editorWindow.GetLineText(lineIndex)
-            let scope = line.Substring(line.LastIndexOf(" "))
+                let lineIndex = editorWindow.GetLineIndexFromCharacterIndex(editorWindow.CaretIndex)
+                let lineStartIndex = editorWindow.GetCharacterIndexFromLineIndex(lineIndex)
+                let lineOffset = editorWindow.CaretIndex - lineStartIndex
+                let line = editorWindow.GetLineText(lineIndex)
+                let scope = line.Substring(Math.Max(line.LastIndexOf(" "), 0)).Trim()
 
-            let (scope, components) = 
-                if not(String.IsNullOrWhiteSpace(scope))
+                let (scope, components) = 
+                    if not(String.IsNullOrWhiteSpace(scope))
+                    then
+                        match scope.Split([|'.'|]) with
+                        | [||] -> scope, []
+                        | scopes -> 
+                            let ss = scopes |> Array.toList |> List.rev
+                            ss.Head, ss.Tail 
+                            |> List.map (fun x -> x.Trim())
+                            |> List.rev
+                    else scope,[]
+
+                showStatus (sprintf "Index: %d, Start: %d, Offset: %d, Length: %d, Scope: %s, Comps %A" lineIndex lineStartIndex lineOffset line.Length scope components)
+
+                let identToken = Parser.tagOfToken(Parser.token.IDENT("")) 
+
+                // Get tool tip at the specified location
+                do! async {
+                    let selected = editorWindow.SelectedText
+                    if String.IsNullOrWhiteSpace(selected)
+                    then return ()
+                    else    
+                        showStatus (sprintf "Tooltip: Index: %d, Start: %d, Offset: %d, Length: %d, Scope: %s, Line: %s" lineIndex lineStartIndex lineOffset line.Length selected line)
+                        let! tip = checkResult.GetToolTipTextAlternate(lineIndex, lineOffset, line, [selected], identToken)
+                        showTooltip (sprintf "%A" tip)
+                    }
+                
+                if(components.Length > 0)
                 then
-                    match scope.Split([|'.'|], StringSplitOptions.RemoveEmptyEntries) with
-                    | [||] -> scope, []
-                    | scopes -> scopes.[scopes.Length - 1], scopes.[0..(scopes.Length - 2)] |> Array.toList
-                else scope,[]
+                    let! methodGroup = 
+                        checkResult.GetDeclarationListInfo(Some parseResults, lineIndex,  lineOffset, line, components, scope, fun _ -> false)
 
-            printfn "Index: %d, Start: %d, Offset: %d, Scope: %s, Comps %A" lineIndex lineStartIndex lineOffset scope components
-            let identToken = Parser.tagOfToken(Parser.token.IDENT("")) 
+                    showCompletions (methodGroup.Items |> Array.choose (fun decl -> if decl.Name.Contains(scope) then Some(decl.Name) else None))
 
-            // Get tool tip at the specified location
-            let! tip = checkResult.GetToolTipTextAlternate(lineIndex,  lineOffset, line, [scope], identToken)
-
-            let! methodGroup = 
-                checkResult.GetDeclarationListInfo(Some parseResults, lineIndex,  lineOffset, line, components, scope, fun _ -> false)
-
-            showCompletions (methodGroup.Items |> Array.map (fun decl -> decl.Name))
-            showTooltip (sprintf "%A" tip)
-
-            if checkResult.Errors.Length = 0 then 
-               printfn "all ok!" 
-
-            for e in checkResult.Errors do 
-               printfn "error/warning: %s(%d%d): %s" e.FileName e.StartLineAlternate e.StartColumn e.Message 
-
+                if checkResult.Errors.Length > 0 then
+                    for e in checkResult.Errors do 
+                        printfn "error/warning: %s(%d-%d): %s" e.FileName e.StartLineAlternate e.StartColumn e.Message
           with e -> 
               printfn "whoiops...: %A" e.Message }
    |> Async.StartImmediate

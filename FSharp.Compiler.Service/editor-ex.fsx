@@ -128,8 +128,8 @@ open Microsoft.FSharp.Compiler
 let identToken = Parser.tagOfToken(Parser.token.IDENT("")) 
 
 // Get tool tip at the specified location
-let tip = checkFileResults.GetToolTipTextAlternate(4, 7, inputLines.[1], ["foo"], identToken)
-printfn "%A" tip
+let tip = checkFileResults.GetToolTipTextAlternate(4, 7, inputLines.[1], ["foo"], identToken) |> Async.RunSynchronously
+printfn "%A %s" tip (inputLines.[1])
 
 (**
 
