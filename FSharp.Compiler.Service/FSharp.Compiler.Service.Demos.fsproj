@@ -48,14 +48,16 @@
   </Choose>
   <Import Project="$(FSharpTargetsPath)" />
   <ItemGroup>
+    <None Include="editor-compbinding.fsx" />
     <None Include="load-wpf.fsx" />
     <None Include="editor-ex.fsx" />
-    <None Include="editor.fsx" />
+    <Compile Include="TipFormatter.fs" />
     <None Include="tokenizer.fsx" />
     <None Include="compiler.fsx" />
     <None Include="untypedtree.fsx" />
     <Content Include="packages.config" />
     <None Include="dojo.fsx" />
+    <None Include="editor.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="Eto">

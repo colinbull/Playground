@@ -1,5 +1,6 @@
-#I "packages/FSharp.Compiler.Service.0.0.73/lib/net45/"
+#I "../bin/"
 #r "FSharp.Compiler.Service.dll"
+#r "FSharp.CompilerBinding.dll"
 #load "TipFormatter.fs"
 #load "load-wpf.fsx"
 
@@ -14,12 +15,12 @@ open System.Collections.Generic
 open Microsoft.FSharp.Compiler.SourceCodeServices
 open FsiWpf
 open Microsoft.FSharp.Compiler
+open FSharp.CompilerBinding
 
-let checker = FSharpChecker.Create()
+//let checker = FSharpChecker.Create()
 
 let exampleProject = @"D:\Appdev\FSharp.Compiler.Service.HandsOn\example\example.fsproj"
-
-let projectOptions = checker.GetProjectOptionsFromProjectFile(exampleProject) 
+//let projectOptions = checker.GetProjectOptionsFromProjectFile(exampleProject) 
 
 type MyFileSystem() = 
     let dflt = Shim.FileSystem
@@ -70,10 +71,6 @@ Shim.FileSystem <- myFileSystem
 
 let fileName1 = @"c:\mycode\test1.fs" // note, the path doesn't exist
 
-let projectOptions2 = 
-    { projectOptions with 
-        OtherOptions = [|   yield! projectOptions.OtherOptions |> Array.filter(fun s -> not (s.EndsWith ".fs"))
-                            yield fileName1 |] }
 
 let editorWindow = 
     let tb = new TextBox(Text = "module Test\n\nlet x = 1")
@@ -134,15 +131,17 @@ let showCompletions completions =
 
 let showTooltip tip =
     Application.Current.Dispatcher.Invoke(fun () ->
-      let tipText = (TipFormatter.formatTip tip)
-      toolTipWindow.Text <- tipText
-      printfn "Tip: %s" tipText
+      toolTipWindow.Text <- (TipFormatter.formatTip tip)
     )
 
 let showStatus text =
     Application.Current.Dispatcher.Invoke(fun () ->
       statusWindow.Text <- text
     )
+
+let languageService = 
+    let ls = new LanguageService(fun s -> ())
+    ls
 
 createEditor()
 
@@ -156,53 +155,48 @@ async { while true do
             then
                 do myFileSystem.SetFile(fileName1, text) 
 
-                let! (parseResults, checkResults) =  
-                    checker.ParseAndCheckFileInProject(fileName1, 0, text, projectOptions2) 
+                let! parseResult =  
+                    languageService.ParseAndCheckFileInProject(exampleProject, fileName1, text, [|yield fileName1|], 
+                            [||], true) 
                 
-                let checkResult = 
-                    match checkResults with
-                    | FSharpCheckFileAnswer.Succeeded(res) -> res
-                    | res -> failwithf "Parsing did not finish... (%A)" res
-
                 let lineIndex = editorWindow.GetLineIndexFromCharacterIndex(editorWindow.CaretIndex)
                 let lineStartIndex = editorWindow.GetCharacterIndexFromLineIndex(lineIndex)
                 let lineOffset = editorWindow.CaretIndex - lineStartIndex
                 let line = editorWindow.GetLineText(lineIndex)
                 let scope = line.Substring(Math.Max(line.LastIndexOf(" "), 0)).Trim()
 
-                let (scope, components) = 
+                let (scope) = 
                     if not(String.IsNullOrWhiteSpace(scope))
                     then
                         match scope.Split([|'.'|]) with
-                        | [||] -> scope, []
+                        | [||] -> scope
                         | scopes -> 
                             let ss = scopes |> Array.toList |> List.rev
-                            ss.Head, ss.Tail 
-                            |> List.map (fun x -> x.Trim())
-                            |> List.rev
-                    else scope,[]
-
-                showStatus (sprintf "Index: %d, Start: %d, Offset: %d, Length: %d, Scope: %s, Comps %A" lineIndex lineStartIndex lineOffset line.Length scope components)
-
-                let identToken = Parser.tagOfToken(Parser.token.IDENT("")) 
-
-                // Get tool tip at the specified location
-                do! async { 
-                        showStatus (sprintf "Tooltip: Index: %d, Start: %d, Offset: %d, Length: %d, Scope: %s, Line: %s" lineIndex lineStartIndex lineOffset line.Length scope line)
-                        let! tip = checkResult.GetToolTipTextAlternate(lineIndex, editorWindow.CaretIndex, line, [scope], identToken)
-                        showTooltip tip
+                            ss.Head
+                    else scope
+                                    // Get tool tip at the specified location
+                do! async {   
+                        showStatus (sprintf "Tooltip: Index: %d, Offset: %d, Line: %s" lineIndex lineOffset line)
+                        let! tip = parseResult.GetToolTip(lineIndex, lineOffset, line)
+                        match tip with
+                        | Some(tip, a) -> 
+                            printfn "%A" a
+                            showTooltip tip
+                        | None -> ()
                     }
                 
-                if(components.Length > 0)
-                then
-                    let! methodGroup = 
-                        checkResult.GetDeclarationListInfo(Some parseResults, lineIndex,  lineOffset, line, components, scope, fun _ -> false)
+                let methodGroup = 
+                    match parseResult.GetDeclarations(lineIndex, lineOffset, line) with
+                    | Some (ms, _) ->
+                        showCompletions (ms.Items |> Array.choose (fun decl -> if decl.Name.Contains(scope) then Some(decl.Name) else None))
+                    | None -> printfn "No decls"
 
-                    showCompletions (methodGroup.Items |> Array.choose (fun decl -> if decl.Name.Contains(scope) then Some(decl.Name) else None))
-
-                if checkResult.Errors.Length > 0 then
-                    for e in checkResult.Errors do 
-                        printfn "error/warning: %s(%d-%d): %s" e.FileName e.StartLineAlternate e.StartColumn e.Message
+                parseResult.CheckResults
+                |> Option.iter (fun checkResult -> 
+                    if checkResult.Errors.Length > 0 then
+                        for e in checkResult.Errors do 
+                            printfn "error/warning: %s(%d-%d): %s" e.FileName e.StartLineAlternate e.StartColumn e.Message
+                )
           with e -> 
               printfn "whoiops...: %A" e.Message }
    |> Async.StartImmediate
