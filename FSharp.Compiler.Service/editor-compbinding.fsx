@@ -95,25 +95,22 @@ let statusWindow =
     tb.Padding <- new Thickness(2.0)
     tb
 
+let handleMouseHover = ref 
+
 let createEditor() = 
     let sp = new Grid()
     sp.ColumnDefinitions.Add(new ColumnDefinition(Width = new GridLength(4., GridUnitType.Star)))
     sp.ColumnDefinitions.Add(new ColumnDefinition(Width = new GridLength(1., GridUnitType.Star)))
     sp.RowDefinitions.Add(new RowDefinition(Height = new GridLength(4., GridUnitType.Star)))
     sp.RowDefinitions.Add(new RowDefinition(Height = new GridLength(1., GridUnitType.Star)))
-    sp.RowDefinitions.Add(new RowDefinition(Height = new GridLength(0.5, GridUnitType.Star)))
     editorWindow.SetValue(Grid.ColumnProperty, 0)
     editorWindow.SetValue(Grid.RowProperty, 0)
     sp.Children.Add(editorWindow) |> ignore
     completionsListBox.SetValue(Grid.ColumnProperty, 1)
     completionsListBox.SetValue(Grid.RowProperty, 0)
     sp.Children.Add(completionsListBox) |> ignore
-    toolTipWindow.SetValue(Grid.ColumnProperty, 0)
-    toolTipWindow.SetValue(Grid.RowProperty, 1)
-    toolTipWindow.SetValue(Grid.ColumnSpanProperty, 2)
-    sp.Children.Add(toolTipWindow) |> ignore
     statusWindow.SetValue(Grid.ColumnProperty, 0)
-    statusWindow.SetValue(Grid.RowProperty, 2)
+    statusWindow.SetValue(Grid.RowProperty, 1)
     statusWindow.SetValue(Grid.ColumnSpanProperty, 2)
     sp.Children.Add(statusWindow) |> ignore
     WPF.show(sp)
@@ -132,6 +129,8 @@ let showCompletions completions =
 let showTooltip tip =
     Application.Current.Dispatcher.Invoke(fun () ->
       toolTipWindow.Text <- (TipFormatter.formatTip tip)
+      editorWindow.ToolTip <- toolTipWindow
+      
     )
 
 let showStatus text =
@@ -176,11 +175,10 @@ async { while true do
                     else scope
                                     // Get tool tip at the specified location
                 do! async {   
-                        showStatus (sprintf "Tooltip: Index: %d, Offset: %d, Line: %s" lineIndex lineOffset line)
-                        let! tip = parseResult.GetToolTip(lineIndex, lineOffset, line)
+                        //printfn "Tooltip: Index: %d, Offset: %d, Line: %s" lineIndex lineOffset line
+                        let! tip = parseResult.GetToolTip(lineIndex, lineOffset - 1, line)
                         match tip with
-                        | Some(tip, a) -> 
-                            printfn "%A" a
+                        | Some(tip, a) ->
                             showTooltip tip
                         | None -> ()
                     }
@@ -195,7 +193,8 @@ async { while true do
                 |> Option.iter (fun checkResult -> 
                     if checkResult.Errors.Length > 0 then
                         for e in checkResult.Errors do 
-                            printfn "error/warning: %s(%d-%d): %s" e.FileName e.StartLineAlternate e.StartColumn e.Message
+                           showStatus <| sprintf "error/warning: %s(%d-%d): %s" e.FileName e.StartLineAlternate e.StartColumn e.Message
+                    else showStatus ""
                 )
           with e -> 
               printfn "whoiops...: %A" e.Message }
